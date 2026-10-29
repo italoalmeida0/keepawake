@@ -77,10 +77,20 @@ export function enableLid(home, native) {
     // changed independently while the first write was being rejected.
     for (const mode of attempted.reverse()) {
       try {
-        if (native.read(scheme, mode) === 0) { native.write(scheme, mode, previous[mode]); restored = true; }
-      } catch { rollbackFailed = true; }
+        if (native.read(scheme, mode) === 0) {
+          native.write(scheme, mode, previous[mode]);
+          restored = true;
+        }
+        delete saved[mode];
+      } catch {
+        rollbackFailed = true;
+      }
     }
-    if (restored) { try { native.refresh(scheme); } catch { rollbackFailed = true; } }
+    if (restored) {
+      try { native.refresh(scheme); }
+      catch { rollbackFailed = true; }
+    }
+    if (!Object.keys(saved).length) delete ledger.schemes[scheme];
     pending(ledger, scheme, previouslyPending || rollbackFailed);
     save(home, ledger);
     throw error;

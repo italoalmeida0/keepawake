@@ -13,7 +13,9 @@ export function createPowercfgWriter({ execute = execFileSync } = {}) {
       execute(executable, args, { windowsHide: true, encoding: 'utf8', timeout: 10000, maxBuffer: 65536, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       if (!Number.isInteger(error.status)) throw new Error(`${operation} could not run: ${error.message}`);
-      throw powerError(error.status, operation, 'powercfg', `${error.stderr || ''}\n${error.stdout || ''}`);
+      const output = `${error.stderr || ''}\n${error.stdout || ''}`;
+      const code = (/group policy override/i.test(output) || error.status === 1260) ? 1260 : error.status;
+      throw powerError(code, operation, 'powercfg', output);
     }
   }
   return {

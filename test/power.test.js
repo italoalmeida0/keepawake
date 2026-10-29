@@ -42,14 +42,30 @@ test('uninstall preserves later user changes and never fabricates default values
   } finally { removeTemporary(home); }
 });
 
-test('a failed second write rolls back the first and keeps a recoverable journal', () => {
+test('a failed second write rolls back the first and leaves no stale backup', () => {
   const home = temporary(), native = fake(home);
   try {
     native.failure = (mode, value) => mode === 'dc' && value === 0;
     assert.throws(() => enableLid(home, native), /Simulated/);
     assert.deepEqual(native.values, { ac: 1, dc: 2 });
+    assert.equal(fs.existsSync(policyFile(home)), false);
+    restoreLid(home, native);
+    assert.equal(fs.existsSync(policyFile(home)), false);
+  } finally { removeTemporary(home); }
+});
+
+test('a failed rollback preserves the recoverable journal for the un-restored setting', () => {
+  const home = temporary(), native = fake(home);
+  try {
+    native.failure = (mode, value) => (mode === 'dc' && value === 0) || (mode === 'ac' && value === 1);
+    assert.throws(() => enableLid(home, native), /Simulated/);
+    assert.deepEqual(native.values, { ac: 0, dc: 2 });
     assert.ok(fs.existsSync(policyFile(home)));
-    native.failure = null; restoreLid(home, native);
+    assert.deepEqual(readJson(policyFile(home)).schemes[scheme], { ac: 1 });
+    assert.deepEqual(readJson(policyFile(home)).pendingRefresh, [scheme]);
+    native.failure = null;
+    restoreLid(home, native);
+    assert.deepEqual(native.values, { ac: 1, dc: 2 });
     assert.equal(fs.existsSync(policyFile(home)), false);
   } finally { removeTemporary(home); }
 });
@@ -87,6 +103,8 @@ test('the legacy powercfg method uses the correct lid GUID and identifies a poli
   assert.throws(() => writer.write(scheme, 'ac', 4));
   const denied = createPowercfgWriter({ execute() { throw Object.assign(new Error('denied'), { status: 1260, stderr: 'Policy restriction' }); } });
   assert.throws(() => denied.write(scheme, 'ac', 0), error => error.code === 1260 && error.operation === 'Write AC lid action' && error.backend === 'powercfg' && /Group Policy/.test(error.message));
+  const override = createPowercfgWriter({ execute() { throw Object.assign(new Error('override'), { status: 1, stderr: 'Group policy override settings exist for this power scheme or power setting.' }); } });
+  assert.throws(() => override.write(scheme, 'dc', 0), error => error.code === 1260 && error.operation === 'Write DC lid action' && error.backend === 'powercfg' && /Group Policy/.test(error.message));
   const activation = createPowercfgWriter({ execute() { throw Object.assign(new Error('denied'), { status: 1260 }); } });
   assert.throws(() => activation.refresh(scheme), error => error.operation === 'Apply active power scheme');
   assert.match(powerError(5, 'Write AC lid action').message, /Access denied/);
@@ -103,14 +121,14 @@ test('an unchanged lid plan is not reactivated under an active-scheme restrictio
   } finally { removeTemporary(home); }
 });
 
-test('a rejected first write leaves no pending activation and can be uninstalled without reapplying a managed plan', () => {
+test('a rejected first write leaves no pending activation, no stale backup and can be uninstalled without reapplying a managed plan', () => {
   const home = temporary(), native = fake(home);
   try {
     native.failure = () => { throw powerError(1260, 'Write AC lid action'); };
     native.refresh = () => { throw new Error('An unchanged plan must not be reapplied'); };
     assert.throws(() => enableLid(home, native), error => error.code === 1260);
     assert.deepEqual(native.values, { ac: 1, dc: 2 });
-    assert.deepEqual(readJson(policyFile(home)).pendingRefresh, []);
+    assert.equal(fs.existsSync(policyFile(home)), false);
     restoreLid(home, native);
     assert.equal(fs.existsSync(policyFile(home)), false);
   } finally { removeTemporary(home); }
